@@ -1,0 +1,2 @@
+class TokenlessException(Exception):
+    pass
