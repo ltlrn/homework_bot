@@ -110,6 +110,18 @@ def message_logging(current_report, perv_report, message):
         return perv_report
 
 
+def status_message(message, current_report):
+    """Отправляет сообщение при изменении статуса."""
+    if message != current_report['status']:
+        send_message(bot, message)
+        logger.info('Отправлено сообщение в чат telegram.')
+        current_report['status'] = message
+    else:
+        logger.debug('Статус работы не изменился')
+
+    return current_report
+
+
 def main():
     """Основная логика работы бота."""
     try:
@@ -136,13 +148,7 @@ def main():
             logger.info('Отправлен запрос к API-сервису')
             message = parse_status(check_response(response))
             logger.info('Проверка ответа сервера')
-            if message != current_report['status']:
-                send_message(bot, message)
-                logger.info('Отправлено сообщение в чат telegram.')
-                current_report['status'] = message
-                perv_report = current_report.copy()
-            else:
-                logger.debug('Статус работы не изменился')
+            current_report = status_message(message, current_report)
 
             current_timestamp = int(response['current_date'])
 
@@ -195,7 +201,7 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s'
+        '%(asctime)s - %(levelname)s - %(funcName)s - %(message)s'
     )
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(formatter)
