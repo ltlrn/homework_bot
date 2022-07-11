@@ -16,3 +16,7 @@ class WrongResponseError(Exception):
 
 class SendError(Exception):
     pass
+
+
+class EmptyHomeworkError(Exception):
+    pass

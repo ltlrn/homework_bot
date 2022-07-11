@@ -8,8 +8,8 @@ import requests
 from dotenv import load_dotenv
 from telegram import Bot
 
-from exceptions import (EmptyResponseError, NoResponseError, SendError,
-                        TokenlessError, WrongResponseError)
+from exceptions import (EmptyHomeworkError, EmptyResponseError,
+                        NoResponseError, SendError, TokenlessError)
 
 load_dotenv()
 
@@ -51,113 +51,142 @@ def get_api_answer(current_timestamp):
     if response.status_code != HTTPStatus.OK:
         raise NoResponseError
 
-    return response.json()
+    try:
+        response = response.json()
+    except Exception as error:
+        raise Exception(error)
+
+    return response
 
 
 def check_response(response):
     """Возвращает список домашних работ."""
+    expected_keys = ['homeworks', 'current_date']
+    actual_homework = response['homeworks'][0]
+
     if not response:
         raise EmptyResponseError
 
-    if not isinstance(response['homeworks'][0], dict):
-        raise WrongResponseError('not a dict')
+    if not all(key in response for key in expected_keys):
+        raise KeyError
 
-    try:
-        if response['homeworks'][0]:
-            homeworks = response['homeworks']
+    if not isinstance(actual_homework, dict):
+        raise TypeError('not a dict')
 
-    except Exception as error:
-        homeworks = []
-        raise Exception(error)
-
-    return homeworks
+    return actual_homework
 
 
 def parse_status(homework):
     """Извлекает из информации о домашней работе статус этой работы."""
-    if isinstance(homework, list):
-        homework = homework[0]
+    try:
+        homework_status = homework.get('status')
+        homework_name = homework.get('homework_name')
+    except AttributeError:
+        raise KeyError
 
-    if isinstance(homework, dict):
+    if not homework_name:
+        raise EmptyHomeworkError
 
-        if not homework.get('homework_name'):
-            raise KeyError
+    verdict = HOMEWORK_STATUSES.get(homework_status)
 
-        if homework.get('status') not in HOMEWORK_STATUSES:
-            raise KeyError
+    if not verdict:
+        raise KeyError
 
-        try:
-            homework_name = homework.get('homework_name')
-            homework_status = homework['status']
-
-            verdict = HOMEWORK_STATUSES[homework_status]
-        except KeyError:
-            homework_name = 'unknown'
-            verdict = 'unknown'
-
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-
-    return 'no active homework'
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def check_tokens():
     """Проверка доступности переменных окружения."""
-    if PRACTICUM_TOKEN and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        return True
-
-    return False
+    return all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
 
 
-def message_logging(message_counter, index, message):
+def message_logging(current_report, perv_report, message):
     """Добавляет логирование и счетчик сообщений."""
-    if not message_counter[index]:
+    if current_report != perv_report:
         send_message(bot, message)
         logger.info('Отправлено сообщение в чат telegram.')
-        message_counter[index] += 1
+        perv_report = current_report.copy()
+
+        return perv_report
 
 
 def main():
     """Основная логика работы бота."""
+    try:
+        if not check_tokens():
+            raise TokenlessError
+    except TokenlessError as error:
+        logger.critical('Токенов нет, не поедем', error)
+        send_message(bot, 'Не хватает токенов')
+        logger.info('Отправлено сообщение в чат telegram.')
+        sys.exit(error)
+
     current_timestamp = int(time.time())
-    message_counter = [0, 0, 0, 0]
-    current_status = ''
+
+    current_report = {
+        'status': '',
+        'messages/output': '',
+    }
+
+    perv_report = {}
 
     while True:
         try:
             response = get_api_answer(current_timestamp)
+            logger.info('Отправлен запрос к API-сервису')
             message = parse_status(check_response(response))
-            if message != current_status:
+            logger.info('Проверка ответа сервера')
+            if message != current_report['status']:
                 send_message(bot, message)
                 logger.info('Отправлено сообщение в чат telegram.')
-                current_status = message
+                current_report['status'] = message
+                perv_report = current_report.copy()
             else:
                 logger.debug('Статус работы не изменился')
 
             current_timestamp = int(response['current_date'])
-            time.sleep(RETRY_TIME)
 
         except NoResponseError as error:
             message = 'No response'
             logger.error('No response', error)
-            message_logging(message_counter, 0, message)
+            current_report['message'] = message
+            perv_report = message_logging(
+                current_report,
+                perv_report,
+                message
+            )
 
         except EmptyResponseError as error:
             message = 'Empty response'
             logger.error(message, error)
-            message_logging(message_counter, 1, message)
+            current_report['message'] = message
+            perv_report = message_logging(
+                current_report,
+                perv_report,
+                message
+            )
 
-        except WrongResponseError as error:
-            message = 'Wrong response type'
+        except EmptyHomeworkError as error:
+            message = 'Empty homework'
             logger.error(message, error)
-            message_logging(message_counter, 2, message)
+            current_report['message'] = message
+            perv_report = message_logging(
+                current_report,
+                perv_report,
+                message
+            )
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
-            message_logging(message_counter, 3, message)
-            time.sleep(RETRY_TIME)
+            current_report['message'] = message
+            perv_report = message_logging(
+                current_report,
+                perv_report,
+                message
+            )
 
-        else:
+        finally:
             time.sleep(RETRY_TIME)
 
 
@@ -173,14 +202,5 @@ if __name__ == '__main__':
     logger.addHandler(handler)
 
     bot = Bot(token=TELEGRAM_TOKEN)
-
-    try:
-        if not check_tokens():
-            raise TokenlessError
-
-    except TokenlessError as error:
-        logger.critical('Токенов нет, не поедем', error)
-        send_message(bot, 'Не хватает токенов')
-        logger.info('Отправлено сообщение в чат telegram.')
 
     main()
