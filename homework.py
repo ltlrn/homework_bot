@@ -70,12 +70,14 @@ def check_response(response):
     if not ('homeworks' in response and 'current_date' in response):
         raise KeyError('Ответ не содержит подходящих ключей')
 
-    if not isinstance(response['homeworks'], list):
+    homeworks = response['homeworks']
+
+    if not isinstance(homeworks, list):
         raise TypeError(
             'Под ключем homeworks в ответе сервера не содержится списка'
         )
 
-    return response['homeworks']
+    return homeworks
 
 
 def parse_status(homework):
