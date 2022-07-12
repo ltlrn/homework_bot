@@ -1,7 +1,3 @@
-class TokenlessError(Exception):
-    pass
-
-
 class NoResponseError(Exception):
     pass
 

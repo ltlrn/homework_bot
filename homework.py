@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from telegram import Bot
 
 from exceptions import (EmptyHomeworkError, EmptyResponseError,
-                        NoResponseError, SendError, TokenlessError)
+                        NoResponseError, SendError)
 
 load_dotenv()
 
@@ -61,36 +61,41 @@ def get_api_answer(current_timestamp):
 
 def check_response(response):
     """Возвращает список домашних работ."""
-    expected_keys = ['homeworks', 'current_date']
-    actual_homework = response['homeworks'][0]
-
     if not response:
         raise EmptyResponseError
 
-    if not all(key in response for key in expected_keys):
-        raise KeyError
+    if not isinstance(response, dict):
+        raise TypeError('Ответ сервера не является словарем')
 
-    if not isinstance(actual_homework, dict):
-        raise TypeError('not a dict')
+    if not ('homeworks' in response and 'current_date' in response):
+        raise KeyError('Ответ не содержит подходящих ключей')
 
-    return actual_homework
+    if not isinstance(response['homeworks'], list):
+        raise TypeError(
+            'Под ключем homeworks в ответе сервера не содержится списка'
+        )
+
+    return response['homeworks']
 
 
 def parse_status(homework):
     """Извлекает из информации о домашней работе статус этой работы."""
-    try:
-        homework_status = homework.get('status')
-        homework_name = homework.get('homework_name')
-    except AttributeError:
-        raise KeyError
+    if not homework:
+        raise EmptyHomeworkError
+
+    if not isinstance(homework, dict):
+        raise TypeError('Тип домашней работы отличен от словаря')
+
+    homework_status = homework.get('status')
+    homework_name = homework.get('homework_name')
 
     if not homework_name:
-        raise EmptyHomeworkError
+        raise KeyError('Домашняя работа не содержит ключа homework_name')
 
     verdict = HOMEWORK_STATUSES.get(homework_status)
 
     if not verdict:
-        raise KeyError
+        raise KeyError('Статус домашней работы неизвестен')
 
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
@@ -124,14 +129,12 @@ def status_message(message, current_report):
 
 def main():
     """Основная логика работы бота."""
-    try:
-        if not check_tokens():
-            raise TokenlessError
-    except TokenlessError as error:
-        logger.critical('Токенов нет, не поедем', error)
-        send_message(bot, 'Не хватает токенов')
+    if not check_tokens():
+        message = 'Не хватает токенов'
+        logger.critical(message)
+        send_message(bot, message)
         logger.info('Отправлено сообщение в чат telegram.')
-        sys.exit(error)
+        sys.exit(message)
 
     current_timestamp = int(time.time())
 
@@ -146,7 +149,7 @@ def main():
         try:
             response = get_api_answer(current_timestamp)
             logger.info('Отправлен запрос к API-сервису')
-            message = parse_status(check_response(response))
+            message = parse_status(check_response(response)[0])
             logger.info('Проверка ответа сервера')
             current_report = status_message(message, current_report)
 
